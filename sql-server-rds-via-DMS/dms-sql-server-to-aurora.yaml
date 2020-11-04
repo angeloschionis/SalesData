@@ -1,0 +1,262 @@
+Description: >
+        This stack template creates DMS pipeline to migrate sql server source DB to RDS Aurora.
+
+Parameters:
+    Vpc:
+        Description: >
+            VPC where to setup DMS instance.                      
+        Type: 'AWS::EC2::VPC::Id'
+    
+    SubnetIds:
+        Description: >
+            Subnets for DMS subnet group. Must contain at least two
+            subnets in two different Availability Zones in the same region.            
+        Type: 'List<AWS::EC2::Subnet::Id>'
+
+    SecurityGroupIds:
+        Description: >
+            Security Group IDs for DMS subnet group. Must contain at least two
+            subnets in two different Availability Zones in the same region. Please make sure that the security group used by your Aurota Target database must allow "MYSQL/Aurora" connection type for port 3306 from this given security group as an inbound rule.
+            It would allow the replication instance to connect to the Aurora database.
+            An example of inboud rule for the Aurora security group would be as follows            
+            "MYSQL/Aurora	TCP	 3306	<Security grp id provided by you in this parameter>"
+            
+        Type: AWS::EC2::SecurityGroup::Id
+
+    ReplicationInstanceAllocatedStorage:
+        Description: >
+            The amount of storage (in gigabytes) to be initially allocated
+            for the replication instance.            
+        Type: Number
+        Default: 100
+
+    ReplicationInstanceClass:
+        Description: >
+            The compute and memory capacity of the replication instance as specified
+            by the replication instance class.
+            Valid Values: dms.t2.micro | dms.t2.small | dms.t2.medium | dms.t2.large |
+            dms.c4.large | dms.c4.xlarge | dms.c4.2xlarge | dms.c4.4xlarge            
+        Type: String
+        Default: dms.c4.xlarge
+
+    SrcDbSchemaName:
+        Description: >
+                        DB schema name, which will be migrated. You may put % in case not to specify any particular schema
+        Type: String
+        
+    SrcDbTableName:
+        Description: >
+                        DB table name, which will be migrated. You may put % in case not to specify any particular table
+        Type: String
+
+    SrcDbName:
+        Description: >
+                        Source DB name
+        Type: String
+        
+    SecretNameSqlServerSrcDB:
+        Description: >
+                        secret manager name which store the credentials for source sql server db
+        Type: String
+        
+    SecretNameAuroraTgtDB:
+        Description: >
+                        secret manager name which store the credentials for source sql server db
+        Type: String
+
+    SrcDbServerName:
+        Description: >
+                        Source DB hostname (ip)
+        Type: String
+        
+    TgtDbAuroraEndPointArn:
+        Description: >
+                        Target DB endpoint ARN. If you go to the Aurofra database from Console, it will be available in the Connectivity & security section.
+        Type: String
+
+    SrcDbPort:
+        Description: >
+                        Source DB connection port number
+        Type: Number
+    
+    TgtDbPort:
+        Description: >
+                       Target DB connection port number
+        Type: Number
+     
+    DmsReplicationTaskMigrationType:
+        Description: >
+                        The migration type. Valid values: full-load | cdc | full-load-and-cdc
+        Type: String
+        Default: full-load
+
+Metadata: 
+    AWS::CloudFormation::Interface: 
+        ParameterGroups: 
+            -
+                Label: 
+                    default: "Network Configuration"
+                Parameters: 
+                    - Vpc
+                    - SubnetIds
+            -
+                Label: 
+                    default: "Replication Instance Parameters"
+                Parameters:
+                    - ReplicationInstanceAllocatedStorage
+                    - ReplicationInstanceClass
+                    - SecurityGroupIds
+            -
+                Label: 
+                    default: "Source Endpoint Parameters"
+                Parameters:
+                    - SrcDbName
+                    - SrcDbUsername
+                    - SrcDbPassword
+                    - SrcDbServerName					
+                    - SrcDbPort					
+                    - SecretNameSqlServerSrcDB					
+            -
+                Label: 
+                    default: "Target Endpoint Parameters"
+                Parameters:
+                    - TgtDbPort
+                    - TgtDbAuroraEndPointArn
+                    - SecretNameAuroraTgtDB
+            -
+                Label: 
+                    default: "Replication Task Parameters"
+                Parameters:
+                    - SrcDbSchemaName
+                    - SrcDbTableName
+                    - DmsReplicationTaskMigrationType
+                    
+Resources:
+  subnetGrpdmsFromSqlServerToRdsAurorareplinstance:
+    Type: AWS::DMS::ReplicationSubnetGroup
+    Properties:
+      ReplicationSubnetGroupDescription: subnet group created for dms replication
+        instance
+      SubnetIds: !Ref SubnetIds
+      ReplicationSubnetGroupIdentifier: subnet-group-dms-sql-aurora
+      Tags:
+      - Key: OrgScope
+        Value: dpp
+      - Key: FunctionalScope
+        Value: aws-dms-mordernization-app
+      - Key: Application
+        Value: dms//
+      - Key: Environment
+        Value: mvp
+    Metadata:
+      aws:cdk:path: dms-sql-server-to-Aurora/subnetGrp-dmsFromSqlServerToRdsAurora-repl-instance
+  SourceEndPoint:
+    Type: AWS::DMS::Endpoint
+    Properties:
+      EndpointType: source
+      EngineName: sqlserver
+      DatabaseName: !Ref SrcDbName
+      EndpointIdentifier: sql-Server-SourceEndpoint-transfer-to-Aurora
+      Password: !Join ['',['{{resolve:secretsmanager:',!Ref SecretNameSqlServerSrcDB,':SecretString:password::}}']]
+      Port: !Ref SrcDbPort
+      ServerName: !Ref SrcDbServerName                 
+      Tags:
+      - Key: OrgScope
+        Value: dpp
+      - Key: FunctionalScope
+        Value: aws-dms-mordernization-app
+      - Key: Application
+        Value: dms//
+      - Key: Environment
+        Value: mvp
+      Username: !Join ['',['{{resolve:secretsmanager:',!Ref SecretNameSqlServerSrcDB,':SecretString:username::}}']]
+      
+    Metadata:
+      aws:cdk:path: dms-sql-server-to-aurora/SourceEndPoint  
+  TargetEndpointRDSAurora:
+    Type: AWS::DMS::Endpoint
+    Properties:
+      EndpointType: target
+      EngineName: aurora-serverless
+      EndpointIdentifier: aurora-TgtEndpoint
+      ExtraConnectionAttributes: targetDbType=SPECIFIC_DATABASE
+      Password: !Join ['',['{{resolve:secretsmanager:',!Ref SecretNameAuroraTgtDB,':SecretString:password::}}']]
+      Port: !Ref TgtDbPort
+      ServerName: !Ref TgtDbAuroraEndPointArn	  
+      Tags:
+      - Key: OrgScope
+        Value: dpp
+      - Key: FunctionalScope
+        Value: aws-dms-mordernization-app
+      - Key: Application
+        Value: dms//
+      - Key: Environment
+        Value: mvp
+      Username: !Join ['',['{{resolve:secretsmanager:',!Ref SecretNameAuroraTgtDB,':SecretString:username::}}']]
+    Metadata:
+      aws:cdk:path: dms-sql-server-to-Aurora/TargetEndpoint
+  dmsReplicationInstanceSQLServerAurora:
+    Type: AWS::DMS::ReplicationInstance
+    Properties:
+      ReplicationInstanceClass: !Sub '${ReplicationInstanceClass}'
+      AllocatedStorage: !Ref ReplicationInstanceAllocatedStorage
+      EngineVersion: 3.3.4
+      MultiAZ: true
+      PubliclyAccessible: false
+      ReplicationSubnetGroupIdentifier: subnet-group-dms-sql-aurora
+      Tags:
+      - Key: OrgScope
+        Value: dpp
+      - Key: FunctionalScope
+        Value: aws-dms-mordernization-app
+      - Key: Application
+        Value: dms//
+      - Key: Environment
+        Value: mvp
+      VpcSecurityGroupIds:
+      - !Ref SecurityGroupIds
+    DependsOn:
+    - subnetGrpdmsFromSqlServerToRdsAurorareplinstance
+    Metadata:
+      aws:cdk:path: dms-sql-server-to-Aurora/dms-Replication-Instance-SQLServer-Aurora
+  dmsReplicationTasksqlserverAurora:
+    Type: AWS::DMS::ReplicationTask
+    Properties:
+      MigrationType: !Ref DmsReplicationTaskMigrationType
+      ReplicationInstanceArn:
+        Ref: dmsReplicationInstanceSQLServerAurora
+      SourceEndpointArn:
+        Ref: SourceEndPoint
+      TableMappings: !Sub
+                    - |-
+                        {
+                            "rules": [
+                                {
+                                    "rule-type": "selection", 
+                                    "rule-id": "1", 
+                                    "rule-action": "include", 
+                                    "object-locator": {
+                                        "schema-name": "${db_schema_name}", 
+                                        "table-name": "${db_table_name}"
+                                    }, 
+                                    "rule-name": "1"
+                                }
+                            ]
+                        }                        
+                    -
+                        db_schema_name: !Ref SrcDbSchemaName
+                        db_table_name: !Ref SrcDbTableName
+      TargetEndpointArn:
+        Ref: TargetEndpointRDSAurora
+      ReplicationTaskSettings: '{"Logging":{"EnableLogging":true},"startReplicationTaskType":"start-replication"}'
+      Tags:
+      - Key: OrgScope
+        Value: dpp
+      - Key: FunctionalScope
+        Value: aws-dms-mordernization-app
+      - Key: Application
+        Value: dms//
+      - Key: Environment
+        Value: mvp
+    Metadata:
+      aws:cdk:path: dms-sql-server-to-Aurora/dms-Replication-Task-sql-server-Aurora
