@@ -1,0 +1,300 @@
+Description: >
+        This stack template creates DMS pipeline to migrate sql server source DB  to S3 bucket.
+
+Parameters:
+    Vpc:
+        Description: >
+            VPC where to setup DMS instance.                      
+        Type: 'AWS::EC2::VPC::Id'
+    
+    SubnetIds:
+        Description: >
+            Subnets for DMS subnet group. Must contain at least two
+            subnets in two different Availability Zones in the same region.            
+        Type: 'List<AWS::EC2::Subnet::Id>'
+
+    SecurityGroupIds:
+        Description: >
+            Security Group IDs for DMS subnet group. Must contain at least two
+            subnets in two different Availability Zones in the same region.            
+        Type: AWS::EC2::SecurityGroup::Id
+
+    ReplicationInstanceAllocatedStorage:
+        Description: >
+            The amount of storage (in gigabytes) to be initially allocated
+            for the replication instance.            
+        Type: Number
+        Default: 100
+
+    ReplicationInstanceClass:
+        Description: >
+            The compute and memory capacity of the replication instance as specified
+            by the replication instance class.
+            Valid Values: dms.t2.micro | dms.t2.small | dms.t2.medium | dms.t2.large |
+            dms.c4.large | dms.c4.xlarge | dms.c4.2xlarge | dms.c4.4xlarge            
+        Type: String
+        Default: dms.c4.xlarge
+
+    SrcDbSchemaName:
+        Description: >
+                        DB schema name, which will be migrated. You may put % in case not to specify any particular schema
+        Type: String
+        
+    SrcDbTableName:
+        Description: >
+                        DB table name, which will be migrated. You may put % in case not to specify any particular table
+        Type: String
+
+    SrcDbName:
+        Description: >
+                        Source DB name
+        Type: String
+        
+    SecretNameSqlServerSrcDB:
+        Description: >
+                        secret manager arn which store the credentials for source db
+        Type: String
+
+    SrcDbServerName:
+        Description: >
+                        Source DB hostname (ip)
+        Type: String
+
+    SrcDbPort:
+        Description: >
+                        Source DB connection port number
+        Type: Number
+
+    TgtS3BucketName:
+        Description: >
+                        Target s3 bucket name
+        Type: String
+
+    TgtS3bucketFolder:
+        Description: >
+                        Target s3 bucket Folder
+        Type: String
+    
+    
+    DmsReplicationTaskMigrationType:
+        Description: >
+                        The migration type. Valid values: full-load | cdc | full-load-and-cdc
+        Type: String
+        Default: full-load
+
+Metadata: 
+    AWS::CloudFormation::Interface: 
+        ParameterGroups: 
+            -
+                Label: 
+                    default: "Network Configuration"
+                Parameters: 
+                    - Vpc
+                    - SubnetIds
+            -
+                Label: 
+                    default: "Replication Instance Parameters"
+                Parameters:
+                    - ReplicationInstanceAllocatedStorage
+                    - ReplicationInstanceClass
+                    - SecurityGroupIds
+            -
+                Label: 
+                    default: "Source Endpoint Parameters"
+                Parameters:
+                    - SrcDbName
+                    - SrcDbUsername
+                    - SrcDbPassword
+                    - SrcDbServerName
+                    - SrcDbPort
+                    - SecretNameSqlServerSrcDB
+            -
+                Label: 
+                    default: "Target Endpoint Parameters"
+                Parameters:
+                    - TgtS3BucketName
+                    - TgtS3bucketFolder
+            -
+                Label: 
+                    default: "Replication Task Parameters"
+                Parameters:
+                    - SrcDbSchemaName
+                    - SrcDbTableName
+                    - DmsReplicationTaskMigrationType
+                    
+Resources:
+  subnetGrpdmsFromSqlServerToS3replinstance:
+    Type: AWS::DMS::ReplicationSubnetGroup
+    Properties:
+      ReplicationSubnetGroupDescription: subnet group created for dms replication
+        instance
+      SubnetIds: !Ref SubnetIds
+      ReplicationSubnetGroupIdentifier: subnet-group-dms-sql-s3
+      Tags:
+      - Key: OrgScope
+        Value: dpp
+      - Key: FunctionalScope
+        Value: aws-dms-mordernization-app
+      - Key: Application
+        Value: dms//
+      - Key: Environment
+        Value: mvp
+    Metadata:
+      aws:cdk:path: dms-sql-server-to-s3/subnetGrp-dmsFromSqlServerToS3-repl-instance
+  SourceEndPoint:
+    Type: AWS::DMS::Endpoint
+    Properties:
+      EndpointType: source
+      EngineName: sqlserver
+      DatabaseName: !Ref SrcDbName
+      EndpointIdentifier: sql-Server-SourceEndpoint
+      Password: !Join ['',['{{resolve:secretsmanager:',!Ref SecretNameSqlServerSrcDB,':SecretString:password::}}']]
+      Port: !Ref SrcDbPort
+      ServerName: !Ref SrcDbServerName                 
+      Tags:
+      - Key: OrgScope
+        Value: dpp
+      - Key: FunctionalScope
+        Value: aws-dms-mordernization-app
+      - Key: Application
+        Value: dms//
+      - Key: Environment
+        Value: mvp
+      Username: !Join ['',['{{resolve:secretsmanager:',!Ref SecretNameSqlServerSrcDB,':SecretString:username::}}']]
+      
+    Metadata:
+      aws:cdk:path: dms-sql-server-to-s3/SourceEndPoint
+  S3AccessedByDMSPolicy6957ACAA:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action:
+          - s3:PutObject
+          - s3:DeleteObject
+          - s3:PutObjectTagging
+          - s3:ListBucket
+          - s3:CreateBucket
+          Effect: Allow
+          Resource: !Join ['',['arn:aws:s3:::',!Ref TgtS3BucketName]]
+        Version: '2012-10-17'
+      PolicyName: S3AccessedByDMSPolicy6957ACAA
+      Roles:
+      - Ref: dmstoaccesss3230CF605
+    Metadata:
+      aws:cdk:path: dms-sql-server-to-s3/S3AccessedByDMSPolicy/Resource
+  dmstoaccesss3230CF605:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: dms.amazonaws.com
+        Version: '2012-10-17'
+      RoleName: dms-to-access-s3
+      Tags:
+      - Key: OrgScope
+        Value: dpp
+      - Key: FunctionalScope
+        Value: aws-dms-mordernization-app
+      - Key: Application
+        Value: dms//
+      - Key: Environment
+        Value: mvp
+    Metadata:
+      aws:cdk:path: dms-sql-server-to-s3/dms-to-access-s3/Resource
+  TargetEndpoint:
+    Type: AWS::DMS::Endpoint
+    Properties:
+      EndpointType: target
+      EngineName: s3
+      EndpointIdentifier: s3-TargetEndpoint
+      ExtraConnectionAttributes: dataFormat=parquet;encryptionMode=SSE_S3
+      S3Settings:
+        BucketFolder: !Ref TgtS3bucketFolder
+        BucketName: !Ref TgtS3BucketName
+        CompressionType: GZIP
+        ServiceAccessRoleArn:
+          Fn::GetAtt:
+          - dmstoaccesss3230CF605
+          - Arn
+      Tags:
+      - Key: OrgScope
+        Value: dpp
+      - Key: FunctionalScope
+        Value: aws-dms-mordernization-app
+      - Key: Application
+        Value: dms//
+      - Key: Environment
+        Value: mvp
+    DependsOn:
+    - dmstoaccesss3230CF605
+    Metadata:
+      aws:cdk:path: dms-sql-server-to-s3/TargetEndpoint
+  dmsReplicationInstanceSQLS3:
+    Type: AWS::DMS::ReplicationInstance
+    Properties:
+      ReplicationInstanceClass: !Sub '${ReplicationInstanceClass}'
+      AllocatedStorage: !Ref ReplicationInstanceAllocatedStorage
+      EngineVersion: 3.3.4
+      MultiAZ: true
+      PubliclyAccessible: false
+      ReplicationSubnetGroupIdentifier: subnet-group-dms-sql-s3
+      Tags:
+      - Key: OrgScope
+        Value: dpp
+      - Key: FunctionalScope
+        Value: aws-dms-mordernization-app
+      - Key: Application
+        Value: dms//
+      - Key: Environment
+        Value: mvp
+      VpcSecurityGroupIds:
+      - !Ref SecurityGroupIds
+    DependsOn:
+    - subnetGrpdmsFromSqlServerToS3replinstance
+    Metadata:
+      aws:cdk:path: dms-sql-server-to-s3/dms-Replication-Instance-SQL-S3
+  dmsReplicationTasksqlservers3:
+    Type: AWS::DMS::ReplicationTask
+    Properties:
+      MigrationType: !Ref DmsReplicationTaskMigrationType
+      ReplicationInstanceArn:
+        Ref: dmsReplicationInstanceSQLS3
+      SourceEndpointArn:
+        Ref: SourceEndPoint
+      TableMappings: !Sub
+                    - |-
+                        {
+                            "rules": [
+                                {
+                                    "rule-type": "selection", 
+                                    "rule-id": "1", 
+                                    "rule-action": "include", 
+                                    "object-locator": {
+                                        "schema-name": "${db_schema_name}", 
+                                        "table-name": "${db_table_name}"
+                                    }, 
+                                    "rule-name": "1"
+                                }
+                            ]
+                        }                        
+                    -
+                        db_schema_name: !Ref SrcDbSchemaName
+                        db_table_name: !Ref SrcDbTableName
+      TargetEndpointArn:
+        Ref: TargetEndpoint
+      ReplicationTaskSettings: '{"Logging":{"EnableLogging":true},"startReplicationTaskType":"start-replication"}'
+      Tags:
+      - Key: OrgScope
+        Value: dpp
+      - Key: FunctionalScope
+        Value: aws-dms-mordernization-app
+      - Key: Application
+        Value: dms//
+      - Key: Environment
+        Value: mvp
+    Metadata:
+      aws:cdk:path: dms-sql-server-to-s3/dms-Replication-Task-sql-server-s3
